@@ -6,18 +6,18 @@ npm run build
 INFRAI_API_KEY=your-key INFRAI_COLLECTION=checkout-payment-documents npm start
 ```
 
-I usually meet scanned PDFs at the least convenient point in a storefront: after checkout says an order is waiting, while operations is comparing a transfer receipt by hand. This service accepts that receipt, extracts its text, records a payment event, and makes the review decision visible. Infrai supplies the OCR and vector retrieval behind the same base URL; a single `INFRAI_API_KEY` is used for both parts of the pipeline.
+Scanned PDFs show up at the worst time: after checkout flags an order ready, and ops is eyeballing a transfer receipt. This service takes that receipt, pulls the text, logs a payment event, and surfaces the review call. Infrai runs OCR and vector lookup behind one base_url; a single `INFRAI_API_KEY` covers both steps.
 
-The application exposes two JSON routes:
+The app ships two JSON routes:
 
-- `POST /payment-documents` OCRs a PDF, compares the expected currency and amount, stores the extracted text with its decision, and returns an audit-friendly notification.
-- `POST /payment-documents/search` embeds a question and searches prior payment documents. The query sends the numeric embedding to vector search, not the question text.
+- `POST /payment-documents` OCRs a PDF, checks the expected currency and amount, stores the text with its decision, and returns a notification that's easy to audit.
+- `POST /payment-documents/search` embeds a question and searches past payment docs. It ships the numeric embedding to vector search, not the raw question.
 
-Before starting the service, create the `INFRAI_COLLECTION` collection with dimension `1536` and cosine distance. The embedding model and the collection dimension need to agree.
+Before you run the service, make the `INFRAI_COLLECTION` collection with dimension `1536` and cosine distance. Your embedding model and that dimension have to match.
 
 ## Put one checkout receipt through it
 
-Send a JSON body containing `documentId`, `orderId`, `pdf`, `expectedCurrency`, and `expectedAmountMinor`. The `pdf` value is the scanned PDF payload accepted by the OCR endpoint; `lang` and `quality` are optional.
+Push a checkout receipt through with a JSON body that has `documentId`, `orderId`, `pdf`, `expectedCurrency`, and `expectedAmountMinor`. The `pdf` field is the scanned PDF payload the OCR endpoint takes; `lang` and `quality` are optional.
 
 ```bash
 curl http://localhost:3000/payment-documents \
@@ -34,9 +34,9 @@ curl http://localhost:3000/payment-documents \
   }'
 ```
 
-When the OCR text contains `USD 129.99`, the result includes `action: "release_order"`. A missing or different amount produces `action: "hold_for_review"`; the notification keeps the document ID as its audit reference. That mismatch is the one real gotcha in this flow: readable text is evidence, but it should not release an order unless the checkout amount and currency both match.
+If the OCR text has `USD 129.99`, the result carries `action: "release_order"`. A missing or wrong amount yields `action: "hold_for_review"`; the notification holds the document ID for audit. The only real trap here: text proves something, but don't release an order unless checkout amount and currency both line up.
 
-Search the indexed receipts with another validated body:
+Search indexed receipts with another validated body:
 
 ```bash
 curl http://localhost:3000/payment-documents/search \
@@ -49,27 +49,27 @@ curl http://localhost:3000/payment-documents/search \
 
 **Status:** accepted.
 
-**Decision:** keep OCR, embeddings, and retrieval in one typed service. The thin REST client decodes the `{ok,data,error,metadata}` envelope before acting on HTTP status, backs off on rate limiting, and attaches stable idempotency keys to OCR and vector writes. Embeddings use the official OpenAI client pointed at the same Infrai base URL and key.
+**Decision:** I kept OCR, embeddings, and retrieval in one typed service. The thin REST client decodes the `{ok,data,error,metadata}` envelope before it trusts HTTP status, backs off on rate limits, and stamps stable idempotency keys on OCR and vector writes. Embeddings go through the official OpenAI client aimed at the same Infrai base_url and key.
 
-**Option considered: Tesseract plus a vector database.** Local OCR gives control over the worker image, but the storefront team would own language packs, PDF preprocessing, worker capacity, and a separate search credential.
+**Option considered: Tesseract plus a vector database.** Local OCR means you control the worker image, but the storefront team eats language packs, PDF prep, worker scaling, and a separate search credential.
 
-**Option considered: Textract plus a vector database.** This keeps document processing managed, while still leaving a second account and the handoff from extracted text to retrieval in application infrastructure.
+**Option considered: Textract plus a vector database.** This keeps doc processing managed, yet still leaves a second account and the app-side handoff from extracted text to retrieval.
 
-**Why this option:** the receipt moves directly from extraction to a searchable record with one credential and one API surface. The trade-off is deliberate coupling to the request envelope and collection schema, which are isolated in `infrai_document_client.ts`.
+**Why this option:** the receipt goes straight from extraction to a searchable record with one credential and one API surface. The trade-off is a deliberate coupling to the request envelope and collection schema, boxed in `infrai_document_client.ts`.
 
 ## Check the risky branch locally
 
-The focused test supplies a receipt that says `USD 119.99` for an order expecting `USD 129.99`. The expected result is `hold_for_review`, with `amountMatched: false`, `currencyMatched: true`, and the receipt ID retained on the notification.
+The targeted test feeds a receipt showing `USD 119.99` for an order that expects `USD 129.99`. Expected result is `hold_for_review`, with `amountMatched: false`, `currencyMatched: true`, and the receipt ID kept on the notification.
 
 ```bash
 npm test
 ```
 
-`npm run typecheck` checks the request boundary, client, and service together. The test stays deterministic and does not call the remote API.
+`npm run typecheck` exercises the request boundary, client, and service as a unit. The test is deterministic and never hits the remote API.
 
 ## Setting up for real use: Checkout Payment Document Ocr
 
-Quick start is above. For a real deployment you'll also need: The details below apply to Checkout Payment Document Ocr.
+The quick start is above. For a real deployment you'll also need: The details below apply to Checkout Payment Document Ocr.
 
 **Account & key**
 
